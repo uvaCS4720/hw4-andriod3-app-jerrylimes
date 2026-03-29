@@ -12,14 +12,15 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class MainUIState(
-    val counterValue: Int,
-    val availableTags: List<String> = emptyList()
+    val availableTags: List<String> = emptyList(),
+    val allLocations: List<Location> = emptyList(),
+    val selectedTag: String? = null
 )
 
 class MainViewModel(
     val initialCounterValue: Int = 0
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(MainUIState(initialCounterValue))
+    private val _uiState = MutableStateFlow(MainUIState(selectedTag = "core"))
     private val repository = LocationRepository()
 
     val uiState: StateFlow<MainUIState> = _uiState.asStateFlow()
@@ -41,13 +42,17 @@ class MainViewModel(
             .flatMap { it.tag_list }
             .distinct()
             .sorted()
-        _uiState.update { it.copy(availableTags = uniqueTags) }
+        _uiState.update {
+            it.copy(
+                availableTags = uniqueTags,
+                allLocations = locations
+            )
+        }
     }
 
-    val isDecrementEnabled: Boolean
-        get() = _uiState.value.counterValue > 0
-    val isResetEnabled: Boolean
-        get() = _uiState.value.counterValue > 0
+    fun selectTag(tag: String?) {
+        _uiState.update { it.copy(selectedTag = tag) }
+    }
 
     init {
         loadLocations()

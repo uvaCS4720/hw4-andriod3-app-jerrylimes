@@ -36,6 +36,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -49,7 +50,10 @@ import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapType
 import com.google.maps.android.compose.MapUiSettings
+import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.google.maps.android.compose.rememberMarkerState
+import com.google.maps.android.compose.rememberUpdatedMarkerState
 import edu.nd.pmcburne.hello.ui.theme.MyApplicationTheme
 import java.util.jar.Manifest
 
@@ -77,9 +81,7 @@ class MainActivity : ComponentActivity() {
                     }
                 ) { innerPadding ->
                     MainScreen(
-                        modifier = Modifier
-                            .padding(innerPadding)
-                            .padding(16.dp)
+                        viewModel, modifier = Modifier.padding(innerPadding)
                     )
                 }
             }
@@ -92,9 +94,9 @@ class MainActivity : ComponentActivity() {
 fun FilterLocationTag(viewModel: MainViewModel) {
     val uiState by viewModel.uiState.collectAsState()
     val options = uiState.availableTags
-    var expanded by remember { mutableStateOf(false) }
-    var selected by remember { mutableStateOf(false) }
-    var selectedOption by remember(options) { mutableStateOf(options.firstOrNull() ?: "") }
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var selected = uiState.selectedTag != null
+    var selectedOption = uiState.selectedTag ?: ""
     Box {
         FilterChip(
             selected = selected,
@@ -126,12 +128,8 @@ fun FilterLocationTag(viewModel: MainViewModel) {
                         { Icon(Icons.Default.Check, contentDescription = "Selected Checkmark") }
                     } else null,
                     onClick = {
-                        if (selected && selectedOption == option) {
-                            selected = false
-                        } else {
-                            selectedOption = option
-                            selected = true
-                        }
+                        val newTag = if (uiState.selectedTag == option) null else option
+                        viewModel.selectTag(newTag)
                         expanded = false
                     }
                 )
@@ -141,14 +139,34 @@ fun FilterLocationTag(viewModel: MainViewModel) {
 }
 
 @Composable
-fun MainScreen(modifier: Modifier = Modifier) {
+fun MainScreen(viewModel: MainViewModel, modifier: Modifier = Modifier) {
+    val uiState by viewModel.uiState.collectAsState()
+    MainScreenContent(
+        uiState = uiState,
+        onSelectTag = { viewModel.selectTag(it) },
+        modifier = modifier
+    )
+}
+
+@Composable
+fun MainScreenContent(
+    uiState: MainUIState,
+    onSelectTag: (String?) -> Unit,
+    modifier: Modifier = Modifier
+) {
     val context = LocalContext.current
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     // Initialize CameraPositionState
     val cameraPositionState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(LatLng(0.0, 0.0), 2f)
     }
-    var uiSettings by remember { mutableStateOf(MapUiSettings()) }
+    var uiSettings = remember {
+        MapUiSettings(
+            zoomControlsEnabled = true,
+            myLocationButtonEnabled = true
+        )
+    }
+    var hasMovedToUser by rememberSaveable { mutableStateOf(false) }
     var properties by remember {
         mutableStateOf(
             MapProperties(
@@ -168,11 +186,14 @@ fun MainScreen(modifier: Modifier = Modifier) {
             properties = properties.copy(isMyLocationEnabled = true)
             // Get location and move camera
             try {
-                fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-                    location?.let {
-                        cameraPositionState.position = CameraPosition.fromLatLngZoom(
-                            LatLng(it.latitude, it.longitude), 15f
-                        )
+                if (!hasMovedToUser) {
+                    fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                        location?.let {
+                            cameraPositionState.position = CameraPosition.fromLatLngZoom(
+                                LatLng(it.latitude, it.longitude), 15f
+                            )
+                            hasMovedToUser = true
+                        }
                     }
                 }
             } catch (e: SecurityException) {
@@ -191,11 +212,14 @@ fun MainScreen(modifier: Modifier = Modifier) {
         ) == PackageManager.PERMISSION_GRANTED
         if (hasFineLocation || hasCoarseLocation) {
             properties = properties.copy(isMyLocationEnabled = true)
-            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-                location?.let {
-                    cameraPositionState.position = CameraPosition.fromLatLngZoom(
-                        LatLng(it.latitude, it.longitude), 15f
-                    )
+            if (!hasMovedToUser) {
+                fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                    location?.let {
+                        cameraPositionState.position = CameraPosition.fromLatLngZoom(
+                            LatLng(it.latitude, it.longitude), 15f
+                        )
+                        hasMovedToUser = true
+                    }
                 }
             }
         } else {
@@ -207,19 +231,28 @@ fun MainScreen(modifier: Modifier = Modifier) {
             )
         }
     }
-    Box(Modifier.fillMaxSize()) {
+    Box(modifier.fillMaxSize()) {
         GoogleMap(
             modifier = Modifier.matchParentSize(),
             properties = properties,
             uiSettings = uiSettings,
             cameraPositionState = cameraPositionState
-        )
-        Switch(
-            checked = uiSettings.zoomControlsEnabled,
-            onCheckedChange = {
-                uiSettings = uiSettings.copy(zoomControlsEnabled = it)
-            }
-        )
+        ) {
+            uiState.allLocations
+                .filter { loc -> uiState.selectedTag == null || loc.tag_list.contains(uiState.selectedTag) }
+                .forEach { location ->
+                    Marker(
+                        state = rememberUpdatedMarkerState(
+                            position = LatLng(
+                                location.visual_center.latitude,
+                                location.visual_center.longitude
+                            )
+                        ),
+                        title = location.name,
+                        snippet = location.description
+                    )
+                }
+        }
     }
 }
 
@@ -227,7 +260,13 @@ fun MainScreen(modifier: Modifier = Modifier) {
 @Preview(showBackground = true)
 fun PreviewMainScreen() {
     MyApplicationTheme {
-        MainScreen()
+        MainScreenContent(
+            uiState = MainUIState(
+                availableTags = listOf("Tag 1", "Tag 2"),
+                selectedTag = "core"
+            ),
+            onSelectTag = {}
+        )
     }
 }
 
