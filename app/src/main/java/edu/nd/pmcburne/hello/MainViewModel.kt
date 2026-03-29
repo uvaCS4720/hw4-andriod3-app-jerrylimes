@@ -24,24 +24,6 @@ class MainViewModel(
 
     val uiState: StateFlow<MainUIState> = _uiState.asStateFlow()
 
-    fun incrementCounter() {
-        _uiState.update { currentState ->
-            currentState.copy(counterValue = _uiState.value.counterValue + 1)
-        }
-    }
-
-    fun decrementCounter() {
-        _uiState.update { currentState ->
-            currentState.copy(counterValue = _uiState.value.counterValue - 1)
-        }
-    }
-
-    fun resetCounter() {
-        _uiState.update { currentState ->
-            currentState.copy(counterValue = 0)
-        }
-    }
-
     fun loadLocations() {
         viewModelScope.launch {
             try {
